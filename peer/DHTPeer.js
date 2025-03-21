@@ -1,6 +1,8 @@
 const net = require('net');  // Importing Node.js net module for TCP connections
 const Singleton = require('./Singleton');  // Utility functions for ID generation
 const RoutingTable = require('./RoutingTable');  // Manages peer storage
+const kPTP = require('./kPTP');  // Import the structured message handler
+
 
 // Parse command-line arguments
 const args = process.argv.slice(2);
@@ -33,20 +35,29 @@ const routingTable = new RoutingTable(peer);
 //Create a TCP Server to listn for incoming connections
 const server = net.createServer(socket => {
     console.log(`Incoming connection from ${socket.remoteAddress}:${socket.remotePort}`);
-    
+
     socket.on('data', (data) => {
-        console.log(`Received: ${data}`);
+        const message = kPTP.parseMessage(data.toString());
+
+        if (message && message.type === 4) {  // Hello message
+            console.log(`Received Hello message from ${message.sender.name} [${message.sender.id}]`);
+            routingTable.pushBucket(message.sender);  // Store peer in DHT table
+            routingTable.refreshBuckets(message.peers);  // Update with sender's known peers
+        }
     });
 
-    socket.on('end', () => {
-        console.log(`Connection closed`);
-    });
+    // Send a welcome message with known peers
+    const welcomeMessage = kPTP.createMessage(2, peer, routingTable.getPeers());
+    socket.write(welcomeMessage);
+    socket.end();
 });
 
 //Start listening on the assigned port
 server.listen(peer.port, peer.ip, () => {
     console.log(`Peer ${peer.name} started at ${peer.ip}:${peer.port} with ID ${peer.id}`);
+    console.log(`Listening on port ${peer.port}...`);  // Add this debug log
 });
+
 
 
 // If -p <peerIP>:<port> is provided, connect to an existing peer
@@ -56,11 +67,18 @@ if (peerConnectIndex !== -1 && peerConnectIndex + 1 < args.length) {
     const client = new net.Socket();
     client.connect(parseInt(targetPort), targetIP, () => {
         console.log(`Connected to peer at ${targetIP}:${targetPort}`);
-        client.write(`Hello from ${peer.name} [${peer.id}]`);
+
+        // Send Hello message to introduce itself
+        const helloMessage = kPTP.createMessage(4, peer);
+        client.write(helloMessage);
     });
 
     client.on('data', (data) => {
-        console.log(`Received from ${targetIP}:${targetPort}: ${data}`);
+        const message = kPTP.parseMessage(data.toString());
+        if (message && message.type === 2) {  // Welcome message
+            console.log(`Received Welcome from ${message.sender.name} [${message.sender.id}]`);
+            routingTable.refreshBuckets(message.peers);  // Update routing table
+        }
     });
 
     client.on('close', () => {
