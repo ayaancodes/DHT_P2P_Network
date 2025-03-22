@@ -8,6 +8,20 @@ const args = process.argv.slice(2);
 const peerNameIndex = args.indexOf('-n');
 const peerConnectIndex = args.indexOf('-p');
 
+//used for getting time stamps
+function getTimestamp() {
+    const now = new Date();
+    return now.toLocaleString('en-CA', {
+        hour12: false,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+}
+
 // Check if the required peer name argument is provided
 if (peerNameIndex === -1 || peerNameIndex === args.length - 1) {
     console.error("Usage: node DHTPeer.js -n <peerName> [-p <peerIP>:<port>]");
@@ -79,7 +93,7 @@ if (peerConnectIndex !== -1 && peerConnectIndex + 1 < args.length) {
 
     const client = new net.Socket();
     client.connect(parseInt(targetPort), targetIP, () => {
-        console.log(`Connected to peer at ${targetIP}:${targetPort}`);
+        console.log(`${getTimestamp()} | Connected to peer at ${targetIP}:${targetPort}`);
 
         // Send Hello message to introduce itself
         const helloMessage = kPTP.createMessage(4, peer);
@@ -95,7 +109,7 @@ if (peerConnectIndex !== -1 && peerConnectIndex + 1 < args.length) {
     });
 
     client.on('close', () => {
-        console.log(`Connection closed with ${targetIP}:${targetPort}`);
+        console.log(`${getTimestamp()} | Connection closed with ${targetIP}:${targetPort}`);
     });
 
     client.on('error', (err) => {
