@@ -12,6 +12,7 @@ class kPTP {
                 id: sender.id
             },
             peers: peers.map(peer => ({
+                name: peer.name,
                 ip: peer.ip,
                 port: peer.port,
                 id: peer.id

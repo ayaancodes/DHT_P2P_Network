@@ -1,12 +1,15 @@
+const net = require('net');
+const kPTP = require('./kPTP');
 class RoutingTable {
     constructor(peer) {
         this.peer = peer;
         this.kBuckets = Array(16).fill(null);
+        this.heartbeatMisses = {}; //key = peer.id, value = # of missed heartbeats
     }
 
     pushBucket(newPeer) {
         let sharedPrefix = this.getSharedPrefix(this.peer.id, newPeer.id);
-        let bucketIndex = sharedPrefix.length;
+        let bucketIndex = Math.min(sharedPrefix.length, this.kBuckets.length - 1);;
 
         if (!this.kBuckets[bucketIndex]) {
             this.kBuckets[bucketIndex] = newPeer;
@@ -53,6 +56,44 @@ class RoutingTable {
             }
         });
     }
+
+
+    sendHeartbeats() {
+        this.kBuckets.forEach((peer, index) => {
+            if (!peer) return;
+    
+            const client = new net.Socket();
+    
+            client.connect(peer.port, peer.ip, () => {
+                const heartbeat = kPTP.createMessage(5, this.peer);
+                client.write(heartbeat);
+                client.end();
+            });
+    
+            client.on('error', () => {
+                // If connection fails, increment missed count
+                this.heartbeatMisses[peer.id] = (this.heartbeatMisses[peer.id] || 0) + 1;
+                const missed = this.heartbeatMisses[peer.id];
+    
+                console.log(`[HEARTBEAT] Missed heartbeat for ${peer.name} (${missed}/3)`);
+    
+                if (missed >= 3) {
+                    console.log(`[HEARTBEAT] Removing peer ${peer.name} [${peer.id}] from bucket ${index}`);
+                    this.kBuckets[index] = null;
+                    delete this.heartbeatMisses[peer.id];
+                }
+            });
+    
+            client.on('data', (data) => {
+                const message = kPTP.parseMessage(data.toString());
+                if (message && message.type === 5) {
+                    // Heartbeat response received: reset missed counter
+                    this.heartbeatMisses[peer.id] = 0;
+                }
+            });
+        });
+    }
+    
     
 }
 
