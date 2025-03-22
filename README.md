@@ -142,4 +142,4 @@ node DHTPeer.js -n Peer4 -p 127.0.0.1:<peer1-port>
 
 ## 👨‍💻 Author
 
-Made with 💻 by Ayaan Munshi (Western University) for SE3314 Assignment 2.
+Made with 💻 by Ayaan Munshi (Western University) for SE3314.
