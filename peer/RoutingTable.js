@@ -48,9 +48,12 @@ class RoutingTable {
         this.kBuckets.forEach((peer, index) => {
             if (peer) {
                 console.log(`Bucket ${index}: ${peer.name} [${peer.id}] at ${peer.ip}:${peer.port}`);
+            } else {
+                console.log(`Bucket ${index}: ---`);
             }
         });
     }
+    
 }
 
 module.exports = RoutingTable;
