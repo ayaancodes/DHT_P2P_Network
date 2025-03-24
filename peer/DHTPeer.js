@@ -1,14 +1,14 @@
-const net = require('net');  // Importing Node.js net module for TCP connections
-const Singleton = require('./Singleton');  // Utility functions for ID generation
-const RoutingTable = require('./RoutingTable');  // Manages peer storage
-const kPTP = require('./kPTP');  // Import the structured message handler
+const net = require('net');  // Built-in Node.js module for creating TCP servers and clients
+const Singleton = require('./Singleton');  // Module for generating unique peer IDs and random ports
+const RoutingTable = require('./RoutingTable');  // Handles storage and management of known peers
+const kPTP = require('./kPTP');  // Module for creating and parsing messages based on a custom protocol
 
-// Parse command-line arguments
-const args = process.argv.slice(2);
-const peerNameIndex = args.indexOf('-n');
-const peerConnectIndex = args.indexOf('-p');
+// Extract command-line input arguments
+const args = process.argv.slice(2);  // Ignore first two default Node arguments
+const peerNameIndex = args.indexOf('-n');  // Find flag for peer name
+const peerConnectIndex = args.indexOf('-p');  // Find flag for peer connection target
 
-//used for getting time stamps
+// Utility function to generate a timestamp string in a readable format
 function getTimestamp() {
     const now = new Date();
     return now.toLocaleString('en-CA', {
@@ -22,19 +22,19 @@ function getTimestamp() {
     });
 }
 
-// Check if the required peer name argument is provided
+// Ensure that a peer name was specified via the command line
 if (peerNameIndex === -1 || peerNameIndex === args.length - 1) {
-    console.error("Usage: node DHTPeer.js -n <peerName> [-p <peerIP>:<port>]");
-    process.exit(1);
+    console.error("Missing peer name.\nUsage: node DHTPeer.js -n <peerName> [-p <peerIP>:<port>]");
+    process.exit(1);  // Stop execution due to invalid input
 }
 
-// Setting up characteristics for each peer
-const peerName = args[peerNameIndex + 1];
-const peerIP = '127.0.0.1';  // Default IP (assuming localhost for now)
-const peerPort = Singleton.getRandomPort();  // Assign a random ephemeral port
-const peerID = Singleton.getPeerID(peerIP, peerPort);  // Generate unique peer ID
+// Initialize basic peer metadata
+const peerName = args[peerNameIndex + 1];  // Retrieve name for this peer
+const peerIP = '127.0.0.1';  // Defaulting to local loopback address
+const peerPort = Singleton.getRandomPort();  // Dynamically assign an unused port
+const peerID = Singleton.getPeerID(peerIP, peerPort);  // Generate a unique identifier using IP and port
 
-// Define peer object
+// Represent the local peer as an object
 const peer = {
     name: peerName,
     ip: peerIP,
@@ -42,82 +42,93 @@ const peer = {
     id: peerID,
 };
 
-// Initialize routing table for peer connections
+// Create a routing table instance to maintain known peers
 const routingTable = new RoutingTable(peer);
 
-// Create a TCP Server to listen for incoming connections
+// Create a TCP server to handle incoming messages from other peers
 const server = net.createServer(socket => {
-    console.log(`Incoming connection from ${socket.remoteAddress}:${socket.remotePort}`);
+    console.log(`New incoming connection from ${socket.remoteAddress}:${socket.remotePort}`);
 
+    // Handle received data from connected peer
     socket.on('data', (data) => {
-        const message = kPTP.parseMessage(data.toString());
-        if (!message) return;
+        const message = kPTP.parseMessage(data.toString());  // Convert raw data into structured message
+        if (!message) return;  // Ignore if message parsing failed
 
-        if (message.type === 4) {  // Hello message
-            console.log(`Received Hello message from ${message.sender.name} [${message.sender.id}]`);
-            routingTable.pushBucket(message.sender);  // Store peer in DHT table
-            routingTable.refreshBuckets(message.peers);  // Update with sender's known peers
+        // If the message is a "Hello" type (4), add sender to routing table
+        if (message.type === 4) {
+            console.log(`Hello received from ${message.sender.name} [ID: ${message.sender.id}]`);
 
-            // Send a welcome message with known peers
+            // Store new peer in the routing table
+            routingTable.pushBucket(message.sender);
+
+            // Also update routing table with additional peers known to the sender
+            routingTable.refreshBuckets(message.peers);
+
+            // Send a welcome message back with our known peers
             const welcomeMessage = kPTP.createMessage(2, peer, routingTable.getPeers());
-            socket.write(welcomeMessage);
-            socket.end();
+            socket.write(welcomeMessage);  // Respond with welcome message
+            socket.end();  // Close the connection after sending
         }
 
-        else if (message.type === 5) {  // Heartbeat message
-            console.log(`[HEARTBEAT] Received heartbeat from ${message.sender.name} [${message.sender.id}]`);
+        // Handle heartbeat message (type 5) to maintain connectivity
+        else if (message.type === 5) {
+            console.log(`[HEARTBEAT] Ping received from ${message.sender.name} [ID: ${message.sender.id}]`);
 
-            const heartbeatResponse = kPTP.createMessage(5, peer);
+            const heartbeatResponse = kPTP.createMessage(5, peer);  // Prepare acknowledgment
 
-            // Fix: prevent "write after end" error
+            // Send response if socket is still valid
             if (!socket.destroyed && socket.writable) {
-                socket.end(heartbeatResponse); // write + end in one step
+                socket.end(heartbeatResponse);  // Send response and close connection
             }
         }
     });
 
+    // Handle socket-level errors gracefully
     socket.on('error', (err) => {
-        console.error(`Socket error: ${err.message}`);
+        console.error(`Socket encountered error: ${err.message}`);
     });
 });
 
-// Start listening on the assigned port
+// Begin listening for incoming peer connections
 server.listen(peer.port, peer.ip, () => {
-    console.log(`Peer ${peer.name} started at ${peer.ip}:${peer.port} with ID ${peer.id}`);
-    console.log(`Listening on port ${peer.port}...`);
+    console.log(`Peer '${peer.name}' is now active at ${peer.ip}:${peer.port} with ID ${peer.id}`);
+    console.log(`Listening for connections on port ${peer.port}...`);
 });
 
-// If -p <peerIP>:<port> is provided, connect to an existing peer
+// If user specified another peer to connect to, initiate handshake
 if (peerConnectIndex !== -1 && peerConnectIndex + 1 < args.length) {
     const [targetIP, targetPort] = args[peerConnectIndex + 1].split(':');
 
-    const client = new net.Socket();
+    const client = new net.Socket();  // Create a new client socket
     client.connect(parseInt(targetPort), targetIP, () => {
-        console.log(`${getTimestamp()} | Connected to peer at ${targetIP}:${targetPort}`);
+        console.log(`${getTimestamp()} | Successfully connected to peer at ${targetIP}:${targetPort}`);
 
-        // Send Hello message to introduce itself
+        // Send introduction message to the target peer
         const helloMessage = kPTP.createMessage(4, peer);
         client.write(helloMessage);
     });
 
+    // Handle data received from target peer
     client.on('data', (data) => {
         const message = kPTP.parseMessage(data.toString());
-        if (message && message.type === 2) {  // Welcome message
-            console.log(`Received Welcome from ${message.sender.name} [${message.sender.id}]`);
-            routingTable.refreshBuckets(message.peers);  // Update routing table
+        if (message && message.type === 2) {  // Welcome message received
+            console.log(`Welcome received from ${message.sender.name} [ID: ${message.sender.id}]`);
+            routingTable.refreshBuckets(message.peers);  // Sync with received peer list
         }
     });
 
+    // Notify when the connection ends
     client.on('close', () => {
         console.log(`${getTimestamp()} | Connection closed with ${targetIP}:${targetPort}`);
     });
 
+    // Handle any connection errors
     client.on('error', (err) => {
-        console.error(`Client error: ${err.message}`);
+        console.error(`Client encountered error: ${err.message}`);
     });
 }
 
-// Periodically send heartbeat messages to peers every 5 seconds
+// Set up a recurring task to send heartbeat messages to all known peers
 setInterval(() => {
-    routingTable.sendHeartbeats();
-}, 5000);
+    routingTable.sendHeartbeats();  // Inform connected peers that this node is still alive
+}, 5000);  // Repeat every 5 seconds
